@@ -1,0 +1,100 @@
+// This query extracts a deduplicated list of entities associated with a specific Microsoft Sentinel incident.
+// It works by retrieving all alerts linked to the incident, parsing their entity data,
+// and selecting the most meaningful identifier for each entity type based on Microsoft's entity schema:
+// https://learn.microsoft.com/en-us/azure/sentinel/entities-reference
+//
+// The result is similar to the "Evidence" section in Microsoft Defender, but with more flexibility and control.
+// You can use this to pivot investigations, enrich incidents, or feed into automation workflows.
+//
+// Set the Incident ID (incident number) below:
+let IncidentId = "xxx";
+//
+// Retrieves all related alerts from incident number
+let AlertsFromIncident = SecurityIncident
+    | where IncidentNumber == IncidentId
+    | mv-expand AlertIds
+    | project AlertId = tostring(AlertIds);
+// Determine the most meaningful identifier for each entity type
+SecurityAlert
+| where SystemAlertId in (AlertsFromIncident)
+| extend Entities = parse_json(Entities)
+| mv-expand Entities
+| extend EntityType = tostring(Entities.Type)
+| extend EntityValue = case(
+    EntityType == "account", coalesce(
+        tostring(Entities.Name),
+        tostring(Entities.UPNSuffix),
+        tostring(Entities.FullName),
+        tostring(Entities.Sid),
+        tostring(Entities.ObjectGuid),
+        tostring(Entities.DnsDomain),
+        tostring(Entities.NTDomain)
+    ),
+    EntityType == "host", coalesce(
+        tostring(Entities.HostName),
+        tostring(Entities.NetBiosName),
+        tostring(Entities.DnsDomain),
+        tostring(Entities.AzureID),
+        tostring(Entities.OMSAgentID)
+    ),
+    EntityType == "ip", tostring(Entities.Address),
+    EntityType == "url", tostring(Entities.Url),
+    EntityType == "azureresource", tostring(Entities.ResourceId),
+    EntityType == "cloudapplication", coalesce(
+        tostring(Entities.AppId),
+        tostring(Entities.Name),
+        tostring(Entities.InstanceName)
+    ),
+    EntityType == "dns", tostring(Entities.DomainName),
+    EntityType == "file", coalesce(
+        tostring(Entities.Name),
+        tostring(Entities.Directory)
+    ),
+    EntityType == "filehash", coalesce(
+        tostring(Entities.Value),
+        tostring(Entities.Algorithm)
+    ),
+    EntityType == "malware", coalesce(
+        tostring(Entities.Name),
+        tostring(Entities.Category)
+    ),
+    EntityType == "process", coalesce(
+        tostring(Entities.ProcessId),
+        tostring(Entities.CommandLine),
+        tostring(Entities.CreationTimeUtc)
+    ),
+    EntityType == "registrykey", coalesce(
+        tostring(Entities.Hive),
+        tostring(Entities.Key)
+    ),
+    EntityType == "registryvalue", coalesce(
+        tostring(Entities.Name),
+        tostring(Entities.Value)
+    ),
+    EntityType == "securitygroup", coalesce(
+        tostring(Entities.DistinguishedName),
+        tostring(Entities.SID),
+        tostring(Entities.ObjectGuid)
+    ),
+    EntityType == "mailbox", coalesce(
+        tostring(Entities.MailboxPrimaryAddress),
+        tostring(Entities.DisplayName),
+        tostring(Entities.Upn)
+    ),
+    EntityType == "mailcluster", tostring(Entities.ClusterSourceIdentifier),
+    EntityType == "mailmessage", coalesce(
+        tostring(Entities.NetworkMessageId),
+        tostring(Entities.Recipient),
+        tostring(Entities.Subject)
+    ),
+    EntityType == "submissionmail", coalesce(
+        tostring(Entities.SubmissionId),
+        tostring(Entities.NetworkMessageId),
+        tostring(Entities.Recipient)
+    ),
+    tostring(Entities.Name) // fallback
+)
+| where isnotempty(EntityValue)
+// Return the entity type and value
+| distinct EntityType, EntityValue  
+// | where EntityType == "xx" (optional filter by entity type)
